@@ -19,9 +19,7 @@
 // =========================================================
 const W = 960, H = 540;          // 画面の大きさ（ゲーム内の座標）
 const GAME_TIME = 60;            // 制限時間（秒）
-const START_FLYERS = 25;         // 最初に持っているチラシの枚数
-const ITEM_FLYERS = 10;          // チラシ束を拾ったときに増える枚数
-const START_LIVES = 3;           // ライフ
+const CRASH_PENALTY = 3;         // 障害物に当たったときに減る残り時間（秒）
 const START_SPEED = 240;         // 走る速さ（ピクセル/秒）
 const SPEED_UP = 3;              // 1秒ごとに速くなる量
 const REFUSE_RATE = 0.22;        // 「チラシ禁止」ポストが出る確率（0〜1）
@@ -81,7 +79,6 @@ const sfx = {
   good:  () => { beep(880, 0.07); setTimeout(() => beep(1320, 0.1), 60); },
   bad:   () => beep(220, 0.28, 'sawtooth', 0.08, -140),
   crash: () => beep(130, 0.3, 'square', 0.1, -70),
-  item:  () => beep(520, 0.14, 'triangle', 0.08, 520),
   empty: () => beep(150, 0.08, 'square', 0.05),
   start: () => [523, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'triangle'), i * 90)),
   end:   () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.15, 'triangle'), i * 120)),
@@ -175,11 +172,10 @@ function newWorld() {
   g = {
     time: GAME_TIME, elapsed: 0, speed: START_SPEED,
     score: 0, combo: 0, maxCombo: 0,
-    flyers: START_FLYERS, lives: START_LIVES,
-    delivered: 0, complaints: 0, missed: 0, thrown: 0,
-    houses: [], obstacles: [], items: [], air: [], texts: [], particles: [],
+    delivered: 0, complaints: 0, missed: 0, thrown: 0, crashes: 0,
+    houses: [], obstacles: [], air: [], texts: [], particles: [],
     clouds: Array.from({ length: 6 }, () => ({ x: rand(0, W), y: rand(30, 150), s: rand(0.6, 1.2) })),
-    obstacleTimer: 1.6, itemTimer: 6, throwCd: 0, invincible: 0, shake: 0, roadOffset: 0,
+    obstacleTimer: 1.6, throwCd: 0, invincible: 0, shake: 0, roadOffset: 0,
     player: { x: 200, y: LANES[1], lane: 1, bob: 0 },
     newBest: false,
   };
@@ -233,13 +229,6 @@ function burst(x, y) {
 function throwFlyer() {
   if (g.throwCd > 0) return;
   const p = g.player;
-  if (g.flyers <= 0) {
-    sfx.empty();
-    addText('チラシ切れ！', p.x, p.y - 130, '#ffffff', 18);
-    g.throwCd = 0.3;
-    return;
-  }
-  g.flyers--;
   g.thrown++;
   g.throwCd = 0.16;
   g.air.push({ x: p.x + 8, y: p.y - 80, vy: -1000, rot: 0 });
@@ -315,19 +304,13 @@ function update(dt) {
     }
   });
 
-  // --- 障害物とチラシ束を出す ---
+  // --- 障害物を出す ---
   g.obstacleTimer -= dt;
   if (g.obstacleTimer <= 0) {
     const lane = randInt(LANES.length);
     const type = Math.random() < 0.6 ? 'cone' : 'cat';
     g.obstacles.push({ type, lane, x: W + 40, y: LANES[lane], extra: type === 'cat' ? 70 : 0, w: type === 'cone' ? 34 : 46, t: 0 });
     g.obstacleTimer = rand(0.9, 1.8) * Math.max(0.55, 1 - g.elapsed / 120); // だんだん増える
-  }
-  g.itemTimer -= dt;
-  if (g.itemTimer <= 0) {
-    const lane = randInt(LANES.length);
-    g.items.push({ x: W + 40, lane, y: LANES[lane], t: 0 });
-    g.itemTimer = rand(5, 8);
   }
 
   // --- 障害物にぶつかったか ---
@@ -336,29 +319,18 @@ function update(dt) {
     o.t += dt;
     const near = Math.abs(p.y - o.y) < 26 && Math.abs(p.x - o.x) < o.w / 2 + 36;
     if (near && g.invincible <= 0) {
-      g.lives--;
+      g.time = Math.max(0, g.time - CRASH_PENALTY); // 残り時間を減らす
+      g.crashes++;
       g.invincible = 1.6;
       g.combo = 0;
       g.shake = 0.35;
       sfx.crash();
-      addText(o.type === 'cat' ? 'ネコだ！' : 'ゴツン！', p.x, p.y - 130, '#ffffff', 24);
-      if (g.lives <= 0) endGame();
+      addText(`${o.type === 'cat' ? 'ネコだ！' : 'ゴツン！'} -${CRASH_PENALTY}秒`, p.x, p.y - 130, '#ff7b6b', 24);
+      if (g.time <= 0) endGame();
     }
   });
   g.obstacles = g.obstacles.filter((o) => o.x > -60);
 
-  // --- チラシ束を拾ったか ---
-  g.items.forEach((it) => {
-    it.x -= g.speed * dt;
-    it.t += dt;
-    if (Math.abs(p.y - it.y) < 26 && Math.abs(p.x - it.x) < 46) {
-      it.taken = true;
-      g.flyers += ITEM_FLYERS;
-      sfx.item();
-      addText(`チラシ +${ITEM_FLYERS}枚`, it.x, it.y - 60, '#ffd23f', 20);
-    }
-  });
-  g.items = g.items.filter((it) => !it.taken && it.x > -60);
 }
 
 function hitMailbox(h, mx) {
@@ -398,7 +370,6 @@ function draw() {
 
   // 奥（上）にあるものから順に描くと、重なりが自然になる
   const things = [];
-  g.items.forEach((it) => things.push({ y: it.y, draw: () => drawItem(it) }));
   g.obstacles.forEach((o) => things.push({ y: o.y, draw: () => drawObstacle(o) }));
   if (state !== 'title') things.push({ y: g.player.y + 0.1, draw: drawPlayer });
   things.sort((a, b) => a.y - b.y).forEach((t) => t.draw());
@@ -606,20 +577,6 @@ function drawObstacle(o) {
   }
 }
 
-function drawItem(it) {
-  const bob = Math.sin(it.t * 6) * 3;
-  drawShadow(it.x, it.y, 22);
-  for (let i = 0; i < 3; i++) {
-    ctx.fillStyle = '#ffd23f';
-    ctx.strokeStyle = '#c9861a';
-    ctx.lineWidth = 1.5;
-    ctx.fillRect(it.x - 17, it.y - 18 - i * 6 + bob, 34, 10);
-    ctx.strokeRect(it.x - 17, it.y - 18 - i * 6 + bob, 34, 10);
-  }
-  ctx.fillStyle = '#e8541e';
-  ctx.fillRect(it.x - 3, it.y - 32 + bob, 6, 24);
-}
-
 function drawFlyer(f) {
   ctx.save();
   ctx.translate(f.x, f.y);
@@ -648,17 +605,6 @@ function drawFloatText(t) {
   ctx.globalAlpha = 1;
 }
 
-function drawHeart(x, y, s, filled) {
-  ctx.beginPath();
-  ctx.moveTo(x, y + s * 0.3);
-  ctx.bezierCurveTo(x, y, x - s * 0.5, y, x - s * 0.5, y + s * 0.3);
-  ctx.bezierCurveTo(x - s * 0.5, y + s * 0.6, x, y + s * 0.8, x, y + s);
-  ctx.bezierCurveTo(x, y + s * 0.8, x + s * 0.5, y + s * 0.6, x + s * 0.5, y + s * 0.3);
-  ctx.bezierCurveTo(x + s * 0.5, y, x, y, x, y + s * 0.3);
-  ctx.fillStyle = filled ? '#ff5a5a' : 'rgba(255,255,255,0.25)';
-  ctx.fill();
-}
-
 function drawHUD() {
   ctx.fillStyle = 'rgba(27,35,64,0.78)';
   ctx.fillRect(0, 0, W, 48);
@@ -684,16 +630,6 @@ function drawHUD() {
   ctx.font = `800 20px ${FONT}`;
   ctx.fillText(`${Math.ceil(g.time)}秒`, tx + 222, 25);
 
-  // チラシ残り
-  ctx.fillStyle = '#aab3d6';
-  ctx.font = `700 14px ${FONT}`;
-  ctx.fillText('チラシ', 600, 25);
-  ctx.fillStyle = g.flyers <= 5 ? '#ff7b6b' : '#ffd23f';
-  ctx.font = `800 22px ${FONT}`;
-  ctx.fillText(`${g.flyers}枚`, 652, 25);
-
-  // ライフ
-  for (let i = 0; i < START_LIVES; i++) drawHeart(850 + i * 30, 14, 20, i < g.lives);
 
   if (g.combo >= 2) {
     ctx.textAlign = 'left';
@@ -739,7 +675,7 @@ function drawTitle() {
     '60秒でポストにチラシを配ろう！',
     '・チラシは真上に飛ぶ。ポストの真下で投げよう',
     '・「チラシ禁止」のポストに入れるとクレーム',
-    '・コーンとネコに注意。チラシ束で補充できる',
+    '・コーンやネコに当たると残り時間が3秒減る',
   ];
   lines.forEach((s, i) => ctx.fillText(s, 410, 304 + i * 26));
 
@@ -771,7 +707,7 @@ function drawResult() {
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#ffffff';
   ctx.font = `400 30px ${DISPLAY}`;
-  ctx.fillText(g.lives <= 0 ? '今日はここまで…' : '配布おつかれさま！', W / 2, 108);
+  ctx.fillText('配布おつかれさま！', W / 2, 108);
 
   ctx.fillStyle = '#ffd23f';
   ctx.font = `800 64px ${FONT}`;
@@ -785,6 +721,7 @@ function drawResult() {
     ['最大コンボ', `${g.maxCombo}`],
     ['配り残し', `${g.missed} 軒`],
     ['クレーム（禁止ポスト）', `${g.complaints} 回`],
+    ['ぶつかった回数', `${g.crashes} 回`],
     ['ハイスコア', `${best}${g.newBest ? '（新記録！）' : ''}`],
   ];
   ctx.font = `500 18px ${FONT}`;
