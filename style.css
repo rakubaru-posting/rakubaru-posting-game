@@ -68,7 +68,9 @@ canvas {
   aspect-ratio: 16 / 9;
   touch-action: none;
   cursor: pointer;
+  outline: none; /* クリックで入力先になったときの枠線は出さない */
 }
+.stage:focus-within { border-color: var(--line); }
 
 /* スマホ用のボタン（指で操作する端末だけ表示） */
 .pad {

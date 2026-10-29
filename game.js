@@ -134,7 +134,18 @@ document.querySelectorAll('[data-act]').forEach((btn) => {
 });
 
 // 画面タップでもスタート・投げるができる
-canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); doAction('throw'); });
+// 注意：ここで e.preventDefault() を呼ぶと、ブラウザが「キーボードの入力先」を
+// ゲーム画面に移してくれなくなり、キー操作が効かなくなる（埋め込み表示のとき）。
+// そのため preventDefault は使わず、自分でフォーカス（入力先）をゲームに移す。
+canvas.addEventListener('pointerdown', () => {
+  canvas.focus({ preventScroll: true });
+  doAction('throw');
+});
+
+// キーボードの入力先がゲームにあるかどうか（ないときは画面に案内を出す）
+let hasFocus = document.hasFocus();
+window.addEventListener('focus', () => { hasFocus = true; });
+window.addEventListener('blur', () => { hasFocus = false; keys.left = keys.right = false; });
 
 function doAction(a) {
   if (state === 'title') { if (a === 'throw') startGame(); return; }
@@ -405,6 +416,19 @@ function draw() {
   if (state === 'play') drawHUD();
   if (state === 'title') drawTitle();
   if (state === 'result') drawResult();
+  if (!hasFocus && state === 'play') drawFocusHint();
+}
+
+// キーボードが効かない状態のときに出す案内
+function drawFocusHint() {
+  ctx.fillStyle = 'rgba(27,35,64,0.88)';
+  roundRect(W / 2 - 230, H - 62, 460, 40, 20);
+  ctx.fill();
+  ctx.fillStyle = '#ffd23f';
+  ctx.font = `700 16px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('画面を1回クリックするとキーボードで操作できます', W / 2, H - 42);
 }
 
 function roundRect(x, y, w, h, r) {
@@ -722,7 +746,7 @@ function drawTitle() {
   if (Math.floor(performance.now() / 500) % 2 === 0) {
     ctx.fillStyle = '#ffffff';
     ctx.font = `800 18px ${FONT}`;
-    ctx.fillText('スペースキー ／ 画面タップでスタート', 410, 438);
+    ctx.fillText(hasFocus ? 'スペースキー ／ 画面クリックでスタート' : '画面をクリックしてスタート', 410, 438);
   }
   if (best > 0) {
     ctx.textAlign = 'right';
