@@ -20,6 +20,10 @@
 const W = 960, H = 540;          // 画面の大きさ（ゲーム内の座標）
 const GAME_TIME = 60;            // 制限時間（秒）
 const CRASH_PENALTY = 3;         // 障害物に当たったときに減る残り時間（秒）
+const THROW_COOLDOWN = 0.5;      // チラシを投げてから次に投げられるまでの時間（秒）
+const CROW_START = 8;            // ゲーム開始から何秒後にカラスが出始めるか
+const CROW_Y = 190;              // カラスが飛ぶ高さ
+const STONE_GRAVITY = 900;       // 石が落ちる勢い
 const START_SPEED = 240;         // 走る速さ（ピクセル/秒）
 const SPEED_UP = 3;              // 1秒ごとに速くなる量
 const REFUSE_RATE = 0.22;        // 「チラシ禁止」ポストが出る確率（0〜1）
@@ -79,7 +83,7 @@ const sfx = {
   good:  () => { beep(880, 0.07); setTimeout(() => beep(1320, 0.1), 60); },
   bad:   () => beep(220, 0.28, 'sawtooth', 0.08, -140),
   crash: () => beep(130, 0.3, 'square', 0.1, -70),
-  empty: () => beep(150, 0.08, 'square', 0.05),
+  caw:   () => { beep(420, 0.12, 'sawtooth', 0.05, -180); setTimeout(() => beep(380, 0.14, 'sawtooth', 0.05, -180), 150); },
   start: () => [523, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'triangle'), i * 90)),
   end:   () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.15, 'triangle'), i * 120)),
 };
@@ -175,6 +179,7 @@ function newWorld() {
     delivered: 0, complaints: 0, missed: 0, thrown: 0, crashes: 0,
     houses: [], obstacles: [], air: [], texts: [], particles: [],
     clouds: Array.from({ length: 6 }, () => ({ x: rand(0, W), y: rand(30, 150), s: rand(0.6, 1.2) })),
+    crows: [], stones: [], crowTimer: CROW_START,
     obstacleTimer: 1.6, throwCd: 0, invincible: 0, shake: 0, roadOffset: 0,
     player: { x: 200, y: LANES[1], lane: 1, bob: 0 },
     newBest: false,
@@ -230,7 +235,7 @@ function throwFlyer() {
   if (g.throwCd > 0) return;
   const p = g.player;
   g.thrown++;
-  g.throwCd = 0.16;
+  g.throwCd = THROW_COOLDOWN; // クールタイム中は投げられない（連打防止）
   g.air.push({ x: p.x + 8, y: p.y - 80, vy: -1000, rot: 0 });
   sfx.throw();
 }
@@ -318,19 +323,69 @@ function update(dt) {
     o.x -= (g.speed + o.extra) * dt;
     o.t += dt;
     const near = Math.abs(p.y - o.y) < 26 && Math.abs(p.x - o.x) < o.w / 2 + 36;
-    if (near && g.invincible <= 0) {
-      g.time = Math.max(0, g.time - CRASH_PENALTY); // 残り時間を減らす
-      g.crashes++;
-      g.invincible = 1.6;
-      g.combo = 0;
-      g.shake = 0.35;
-      sfx.crash();
-      addText(`${o.type === 'cat' ? 'ネコだ！' : 'ゴツン！'} -${CRASH_PENALTY}秒`, p.x, p.y - 130, '#ff7b6b', 24);
-      if (g.time <= 0) endGame();
-    }
+    if (near) crash(o.type === 'cat' ? 'ネコだ！' : 'ゴツン！');
   });
   g.obstacles = g.obstacles.filter((o) => o.x > -60);
 
+  // --- カラスを出す（右から飛んできて、らくばる君を狙って石を落とす） ---
+  if (g.elapsed > CROW_START) {
+    g.crowTimer -= dt;
+    if (g.crowTimer <= 0) {
+      g.crows.push({ x: W + 60, y: CROW_Y + rand(-20, 20), t: 0, dropped: false, aim: Math.random() < 0.7, lane: randInt(LANES.length) });
+      sfx.caw();
+      g.crowTimer = rand(4, 7) * Math.max(0.5, 1 - g.elapsed / 100); // だんだん増える
+    }
+  }
+  g.crows.forEach((c) => {
+    c.x -= (g.speed + 90) * dt;
+    c.t += dt;
+    if (!c.dropped) {
+      // 石が落ちるあいだに地面が流れる分を見越して、らくばる君の位置に落ちるよう計算
+      const lane = c.aim ? p.lane : c.lane; // 7割はらくばる君の車線を狙う
+      const fallTime = Math.sqrt((2 * (LANES[lane] - c.y)) / STONE_GRAVITY);
+      const target = p.x + g.speed * fallTime;
+      if (c.x <= target + 10) {
+        c.dropped = true;
+        g.stones.push({ x: c.x, y: c.y + 10, vy: 0, lane, groundY: LANES[lane] });
+      }
+    }
+  });
+  g.crows = g.crows.filter((c) => c.x > -80);
+
+  // --- 落ちてくる石 ---
+  g.stones.forEach((st) => {
+    st.x -= g.speed * dt;
+    st.vy += STONE_GRAVITY * dt;
+    st.y += st.vy * dt;
+    // らくばる君の体（頭〜タイヤ）の高さに来たときに同じ車線にいたら当たり
+    const sameLane = st.lane === p.lane && Math.abs(p.y - st.groundY) < 26;
+    if (sameLane && Math.abs(p.x - st.x) < 38 && st.y > st.groundY - PLAYER_H * 0.8) {
+      st.dead = true;
+      crash('石が落ちてきた！');
+      return;
+    }
+    if (st.y >= st.groundY) {
+      // 地面に落ちた石は、道路の上に残る障害物になる
+      st.dead = true;
+      g.obstacles.push({ type: 'rock', lane: st.lane, x: st.x, y: st.groundY, extra: 0, w: 26, t: 0 });
+    }
+  });
+  g.stones = g.stones.filter((st) => !st.dead);
+
+}
+
+// 障害物や石に当たったとき
+function crash(label) {
+  if (g.invincible > 0) return; // 当たった直後は少しのあいだ無敵
+  const p = g.player;
+  g.time = Math.max(0, g.time - CRASH_PENALTY); // 残り時間を減らす
+  g.crashes++;
+  g.invincible = 1.6;
+  g.combo = 0;
+  g.shake = 0.35;
+  sfx.crash();
+  addText(`${label} -${CRASH_PENALTY}秒`, p.x, p.y - 130, '#ff7b6b', 24);
+  if (g.time <= 0) endGame();
 }
 
 function hitMailbox(h, mx) {
@@ -371,9 +426,12 @@ function draw() {
   // 奥（上）にあるものから順に描くと、重なりが自然になる
   const things = [];
   g.obstacles.forEach((o) => things.push({ y: o.y, draw: () => drawObstacle(o) }));
+  g.stones.forEach((st) => things.push({ y: st.groundY - 0.1, draw: () => drawStoneShadow(st) }));
   if (state !== 'title') things.push({ y: g.player.y + 0.1, draw: drawPlayer });
   things.sort((a, b) => a.y - b.y).forEach((t) => t.draw());
 
+  g.stones.forEach(drawStone);
+  g.crows.forEach(drawCrow);
   g.air.forEach(drawFlyer);
   g.particles.forEach((q) => {
     ctx.globalAlpha = Math.max(0, q.life * 1.5);
@@ -381,6 +439,7 @@ function draw() {
     ctx.fillRect(q.x - 3, q.y - 3, 6, 6);
   });
   ctx.globalAlpha = 1;
+  if (state === 'play') drawCooldown();
   g.texts.forEach(drawFloatText);
   ctx.restore();
 
@@ -543,6 +602,14 @@ function drawPlayer() {
 }
 
 function drawObstacle(o) {
+  if (o.type === 'rock') {
+    drawShadow(o.x, o.y, 16);
+    ctx.fillStyle = '#8b8d94';
+    ctx.beginPath(); ctx.ellipse(o.x, o.y - 9, 15, 11, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#b4b6bd';
+    ctx.beginPath(); ctx.ellipse(o.x - 4, o.y - 13, 5, 3, 0, 0, Math.PI * 2); ctx.fill();
+    return;
+  }
   if (o.type === 'cone') {
     drawShadow(o.x, o.y, 22);
     ctx.fillStyle = '#ff7a1a';
@@ -575,6 +642,49 @@ function drawObstacle(o) {
     ctx.fillRect(o.x - 27, o.y - 31, 3, 3);
     ctx.fillRect(o.x - 20, o.y - 31, 3, 3);
   }
+}
+
+// カラス（羽ばたきアニメーションつき）
+function drawCrow(c) {
+  const flap = Math.sin(c.t * 16) * 14;
+  ctx.fillStyle = '#1e1f26';
+  ctx.beginPath(); ctx.ellipse(c.x, c.y, 22, 10, 0, 0, Math.PI * 2); ctx.fill();   // 体
+  ctx.beginPath(); ctx.arc(c.x - 20, c.y - 5, 9, 0, Math.PI * 2); ctx.fill();       // 頭
+  ctx.beginPath();                                                                   // しっぽ
+  ctx.moveTo(c.x + 18, c.y - 3); ctx.lineTo(c.x + 36, c.y - 8); ctx.lineTo(c.x + 34, c.y + 6);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();                                                                   // 羽
+  ctx.moveTo(c.x - 8, c.y - 4); ctx.lineTo(c.x + 6, c.y - 18 - flap); ctx.lineTo(c.x + 14, c.y - 2);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#e8b13a';                                                         // くちばし
+  ctx.beginPath(); ctx.moveTo(c.x - 28, c.y - 7); ctx.lineTo(c.x - 38, c.y - 3); ctx.lineTo(c.x - 28, c.y - 1);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(c.x - 24, c.y - 8, 3, 3);                                             // 目
+}
+
+// 落下中の石と、落ちる場所に出る影（よける目印）
+function drawStone(st) {
+  ctx.fillStyle = '#8b8d94';
+  ctx.beginPath(); ctx.arc(st.x, st.y, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#b4b6bd';
+  ctx.beginPath(); ctx.arc(st.x - 3, st.y - 3, 3, 0, Math.PI * 2); ctx.fill();
+}
+function drawStoneShadow(st) {
+  const k = clamp((st.y - CROW_Y) / (st.groundY - CROW_Y), 0, 1); // 地面に近づくほど濃く大きく
+  ctx.fillStyle = `rgba(0,0,0,${0.15 + k * 0.3})`;
+  ctx.beginPath(); ctx.ellipse(st.x, st.groundY - 4, 8 + k * 10, 4 + k * 3, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+// チラシのクールタイム表示（らくばる君の頭の上の小さなゲージ）
+function drawCooldown() {
+  if (g.throwCd <= 0) return;
+  const p = g.player;
+  const x = p.x - 24, y = p.y - PLAYER_H - 8;
+  ctx.fillStyle = 'rgba(27,35,64,0.75)';
+  ctx.fillRect(x - 2, y - 2, 52, 10);
+  ctx.fillStyle = '#ffd23f';
+  ctx.fillRect(x, y, 48 * (1 - g.throwCd / THROW_COOLDOWN), 6);
 }
 
 function drawFlyer(f) {
@@ -675,7 +785,7 @@ function drawTitle() {
     '60秒でポストにチラシを配ろう！',
     '・チラシは真上に飛ぶ。ポストの真下で投げよう',
     '・「チラシ禁止」のポストに入れるとクレーム',
-    '・コーンやネコに当たると残り時間が3秒減る',
+    '・コーン、ネコ、カラスの落とす石で残り時間-3秒',
   ];
   lines.forEach((s, i) => ctx.fillText(s, 410, 304 + i * 26));
 
