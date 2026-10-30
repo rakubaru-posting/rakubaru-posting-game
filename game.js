@@ -20,6 +20,7 @@
 const W = 960, H = 540;          // 画面の大きさ（ゲーム内の座標）
 const GAME_TIME = 60;            // 制限時間（秒）
 const CRASH_PENALTY = 3;         // 障害物に当たったときに減る残り時間（秒）
+const MISS_PENALTY = 1;          // チラシを外す・禁止ポストに入れたときに減る残り時間（秒）
 const START_SPEED = 240;         // 走る速さ（ピクセル/秒）
 const SPEED_UP = 3;              // 1秒ごとに速くなる量
 const REFUSE_RATE = 0.22;        // 「チラシ禁止」ポストが出る確率（0〜1）
@@ -172,7 +173,7 @@ function newWorld() {
   g = {
     time: GAME_TIME, elapsed: 0, speed: START_SPEED,
     score: 0, combo: 0, maxCombo: 0,
-    delivered: 0, complaints: 0, missed: 0, thrown: 0, crashes: 0,
+    delivered: 0, complaints: 0, missed: 0, thrown: 0, crashes: 0, wasted: 0,
     houses: [], obstacles: [], air: [], texts: [], particles: [],
     clouds: Array.from({ length: 6 }, () => ({ x: rand(0, W), y: rand(30, 150), s: rand(0.6, 1.2) })),
     obstacleTimer: 1.6, throwCd: 0, invincible: 0, shake: 0, roadOffset: 0,
@@ -287,7 +288,11 @@ function update(dt) {
       const hitY = f.y < MAILBOX_Y + MAILBOX_H + 6 && f.y > MAILBOX_Y - 20;
       if (hitX && hitY) { hitMailbox(h, mx); f.dead = true; break; }
     }
-    if (f.y < MAILBOX_Y - 40) f.dead = true; // 外れて飛んでいった
+    if (f.y < MAILBOX_Y - 40) { // 外れて飛んでいった
+      f.dead = true;
+      g.wasted++;
+      losePenaltyTime(f.x, MAILBOX_Y - 60, 'ハズレ');
+    }
   });
   g.air = g.air.filter((f) => !f.dead);
 
@@ -333,15 +338,24 @@ function update(dt) {
 
 }
 
+// チラシを外したとき：残り時間を少し減らす（連打防止）
+function losePenaltyTime(x, y, label) {
+  g.time = Math.max(0, g.time - MISS_PENALTY);
+  addText(`${label} -${MISS_PENALTY}秒`, x, y, '#d6dcef', 16);
+  if (g.time <= 0) endGame();
+}
+
 function hitMailbox(h, mx) {
   h.mb.done = true;
   if (h.mb.refuse) {
     h.mb.angry = true;
     g.score = Math.max(0, g.score - 150);
+    g.time = Math.max(0, g.time - MISS_PENALTY);
     g.complaints++;
     g.combo = 0;
     g.shake = 0.25;
-    addText('お断りです！ -150', mx + 20, MAILBOX_Y - 18, '#ff7b6b', 20);
+    addText(`お断りです！ -150 -${MISS_PENALTY}秒`, mx + 20, MAILBOX_Y - 18, '#ff7b6b', 20);
+    if (g.time <= 0) endGame();
     sfx.bad();
     return;
   }
@@ -675,7 +689,7 @@ function drawTitle() {
     '60秒でポストにチラシを配ろう！',
     '・チラシは真上に飛ぶ。ポストの真下で投げよう',
     '・「チラシ禁止」のポストに入れるとクレーム',
-    '・コーンやネコに当たると残り時間が3秒減る',
+    '・外す・禁止ポストは-1秒、障害物は-3秒',
   ];
   lines.forEach((s, i) => ctx.fillText(s, 410, 304 + i * 26));
 
@@ -721,12 +735,13 @@ function drawResult() {
     ['最大コンボ', `${g.maxCombo}`],
     ['配り残し', `${g.missed} 軒`],
     ['クレーム（禁止ポスト）', `${g.complaints} 回`],
+    ['外したチラシ', `${g.wasted} 枚`],
     ['ぶつかった回数', `${g.crashes} 回`],
     ['ハイスコア', `${best}${g.newBest ? '（新記録！）' : ''}`],
   ];
   ctx.font = `500 18px ${FONT}`;
   rows.forEach(([label, value], i) => {
-    const y = 266 + i * 34;
+    const y = 256 + i * 29;
     ctx.textAlign = 'left';
     ctx.fillStyle = '#aab3d6';
     ctx.fillText(label, 270, y);
