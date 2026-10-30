@@ -136,9 +136,6 @@ const sfx = (() => {
       noise(1.3 * size, 320, 0.9 * size);
       tone(90, 0.5, 0.5 * size, 0, 'sine', 40);
     },
-    crackle() {
-      for (let i = 0; i < 14; i++) noise(0.04, 4000, 0.18, 0.6 + Math.random() * 0.9, 'highpass');
-    },
     raku() {
       [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.5, 0.12, 0.15 + i * 0.08, 'triangle'));
     },
@@ -270,11 +267,9 @@ function burst(x, y, size = 1) {
     }
     case 'willow': // 柳：金色がしだれる
       sphere(Math.round(100 * size), (a, k) => addPart(x, y, a, v * 0.8 * k, { life: rand(2.4, 3), col: '#ffcf6b', drag: 0.955, g: 95, w: 1.6, tw: true }));
-      sfx.crackle();
       break;
     case 'strobe': // 錦：キラキラ点滅
       sphere(Math.round(110 * size), (a, k) => addPart(x, y, a, v * k, { life: rand(1.6, 2.1), col: '#fff4d6', col2: col, tw: true, w: 2 }));
-      sfx.crackle();
       break;
     default: // 芯入り：内と外で2色
       sphere(Math.round(100 * size), (a, k) => addPart(x, y, a, v * k * rand(0.95, 1), { life: 1.5, col }));
