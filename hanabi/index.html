@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>らくばる君の花火大会</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <div>
+        <h1>らくばる君の<span>花火大会</span></h1>
+        <p class="sub">上がってくる花火の玉を、スコープの中でドン！</p>
+      </div>
+      <div class="tools">
+        <a class="other-game" href="../">← ポスティング大作戦へ</a>
+        <button id="mute" type="button" aria-pressed="false">音：オン</button>
+      </div>
+    </header>
+
+    <div class="stage">
+      <canvas id="game" width="960" height="540" tabindex="0" aria-label="ゲーム画面"></canvas>
+    </div>
+
+    <div class="pad" aria-label="操作ボタン">
+      <button type="button" id="fire" class="fire">ドン！</button>
+    </div>
+
+    <section class="howto">
+      <div>
+        <h2>操作</h2>
+        <dl>
+          <dt><kbd>Space</kbd></dt><dd>花火を開く（画面タップ・<kbd>Enter</kbd> でも可）</dd>
+          <dt><kbd>M</kbd></dt><dd>音のオン・オフ</dd>
+        </dl>
+      </div>
+      <div>
+        <h2>ルール</h2>
+        <p>玉がスコープの円に入った瞬間に押すと花火が開きます。中心に近いほど高得点（どんぴしゃ 300／うまい 200／おしい 100）。続けて成功するとコンボで点数が最大3倍に。玉が上がるタイミングと速さはバラバラで、時間がたつほど速く、ななめにも飛んできます。</p>
+        <p class="note"><span class="raku">★ 虹色の玉</span>は「らくばる君花火」。開くとらくばる君が夜空に現れ、最大1500点。空振りするとコンボが切れて、少しの間押せなくなります。</p>
+      </div>
+    </section>
+  </main>
+  <script src="game.js"></script>
+</body>
+</html>
